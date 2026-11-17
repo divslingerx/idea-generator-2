@@ -32,7 +32,15 @@ const runtime: Runtime = {
 const engine = createEngine({ repo, chat: makeChat(runtime.get), settings: runtime.get });
 const autopilot = createAutopilot({ repo, engine, settings: runtime.get }).start();
 
-createServer(createHandler({ repo, engine, autopilot, runtime, publicDir: join(root, 'public') })).listen(PORT, HOST, () => {
+// Host names the server answers to, besides loopback. A wildcard HOST (0.0.0.0, ::) names none:
+// list the LAN names in ALLOWED_HOSTS. Anything else is refused (DNS rebinding).
+// This is not authentication: on a LAN, anyone who can reach the port can send Host: localhost.
+const allowedHosts = [
+  ...(['0.0.0.0', '::'].includes(HOST) ? [] : [HOST.includes(':') ? `[${HOST}]` : HOST]),
+  ...(process.env.ALLOWED_HOSTS ?? '').split(','),
+];
+
+createServer(createHandler({ repo, engine, autopilot, runtime, allowedHosts, publicDir: join(root, 'public') })).listen(PORT, HOST, () => {
   console.log(`Idégeneratorn: http://localhost:${PORT}`);
   const auto = repo.listBoards().filter((b) => b.config.mode === 'auto');
   if (auto.length) console.log(`Autopilot on for ${auto.length} board(s); they need keys from the browser or the environment.`);

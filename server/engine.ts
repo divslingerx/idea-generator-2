@@ -13,6 +13,7 @@ import { writeBrief, writeProject } from './project.ts';
 import { ProviderError, type AppSettings, type ChatFn, type Role } from './providers.ts';
 import { fitness, isJudged, medal, scoreSum } from '../public/js/score.js';
 import { nextMove } from '../public/js/evolve.js';
+import { overBudget } from './autopilot.ts';
 
 export class AppError extends Error {
   status: number;
@@ -96,8 +97,15 @@ export function createEngine(deps: Deps) {
   const titles = (boardId: number) => repo.listIdeas(boardId).map((i) => i.title);
   const emitIdeas = (boardId: number, ideas: Idea[]) => ideas.length && bus.emit(boardId, { type: 'ideas', ideas });
 
-  /** Every LLM call: spend lands on the board's ledger; failures become 502s that keep the provider's code. */
+  /**
+   * Every LLM call: refused once today's global limit is spent (manual clicks too, not just the
+   * autopilot); spend lands on the board's ledger; failures become 502s that keep the provider's code.
+   */
   async function call<T extends { costUsd: number }>(boardId: number, fn: () => Promise<T>): Promise<T> {
+    const limit = deps.settings().maxUsdPerDay;
+    if (overBudget(repo.spentOn(null), limit)) {
+      throw new AppError(429, 'global_budget', `Today's spending limit ($${limit}) is reached. Raise it in Settings or wait until tomorrow.`);
+    }
     try {
       const out = await fn();
       repo.addSpend(boardId, out.costUsd);

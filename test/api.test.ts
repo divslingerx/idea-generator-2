@@ -1,7 +1,7 @@
 // The whole HTTP API against an in-memory database and a fake LLM.
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { createServer, type Server } from 'node:http';
+import { createServer, request, type Server } from 'node:http';
 import { existsSync, mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -171,7 +171,7 @@ test('board config is validated and clamped', async () => {
   assert.equal(c.lang, 'sv');
 });
 
-test('the judge turns gold into a Claude Code project; a board can switch that off', async () => {
+test('the judge turns gold into a Claude Code project; CLAUDE.md holds no model text; a board can switch it off', async () => {
   judgeScores = { originality: 5, feasibility: 4, impact: 5 };
   const board = await newBoard({ goal: 'Ljud i offentliga rum' });
   const s = await seed(board.id, 'Sjungande parkbänk');
@@ -180,10 +180,14 @@ test('the judge turns gold into a Claude Code project; a board can switch that o
   assert.ok(gold.projectPath, 'gold → project');
   assert.ok(gold.projectPath!.startsWith(projectsRoot));
   assert.match(gold.projectPath!, /sjungande-bank$/, 'slug is ASCII');
+  const brief = readFileSync(join(gold.projectPath!, 'BRIEF.md'), 'utf8');
+  assert.match(brief, /^# Sjungande bänk/);
+  assert.match(brief, /Ljud i offentliga rum/);
+  assert.match(brief, /14\/15 🥇/);
   const claude = readFileSync(join(gold.projectPath!, 'CLAUDE.md'), 'utf8');
-  assert.match(claude, /^# Sjungande bänk/);
-  assert.match(claude, /Ljud i offentliga rum/);
-  assert.match(claude, /14\/15 🥇/);
+  assert.match(claude, /^# Projektets regler\r?\n/);
+  assert.match(claude, /BRIEF\.md/);
+  for (const text of ['Sjungande', 'Ljud i offentliga rum', 'En bänk som sjunger']) assert.ok(!claude.includes(text), `no "${text}" in CLAUDE.md`);
   assert.ok(existsSync(join(gold.projectPath!, 'vault', 'Home.md')));
   assert.match(readFileSync(join(gold.projectPath!, '.gitignore'), 'utf8'), /^vault\/$/m);
 
@@ -396,4 +400,59 @@ test('report: totals, every project, per-board insights, saved conclusions, Mark
   assert.match(md, /^# Rapport · \d{4}-\d{2}-\d{2}/);
   assert.match(md, /## Slutsatser/);
   assert.match(md, /cd ".*sjungande-bank" && claude/);
+});
+
+// Raw request: fetch() will not let us forge Host or Origin.
+function raw(method: string, path: string, headers: Record<string, string>, body = '') {
+  return new Promise<number>((done, fail) => {
+    const r = request(base + path, { method, headers: { 'Content-Length': Buffer.byteLength(body), ...headers } }, (res) => {
+      res.resume();
+      done(res.statusCode!);
+    });
+    r.on('error', fail);
+    r.end(body);
+  });
+}
+
+test('only the app itself can drive the API: no DNS rebinding, no cross-site posts', async () => {
+  const board = await newBoard();
+  const before = repo.listBoards().length;
+  const json = { 'Content-Type': 'application/json' };
+  const body = JSON.stringify({ title: 'x' });
+  const port = new URL(base).port;
+
+  assert.equal(await raw('GET', '/api/providers', { Host: `evil.example:${port}` }), 403, 'a rebinding page brings its own Host');
+  assert.equal(await raw('GET', '/', { Host: `evil.example:${port}` }), 403, 'static files too');
+  assert.equal(await raw('GET', '/api/providers', { Host: `localhost:${port}` }), 200);
+
+  assert.equal(await raw('POST', '/api/boards', { ...json, Origin: 'https://evil.example' }, body), 403, 'cross-site origin');
+  assert.equal(await raw('POST', '/api/boards', { ...json, Origin: 'null' }, body), 403, 'opaque origin');
+  assert.equal(await raw('POST', '/api/boards', { ...json, Origin: `http://127.0.0.1:1` }, body), 403, 'same host, other port');
+  assert.equal(await raw('POST', `/api/ideas/1/expand`, { Origin: 'https://evil.example' }), 403, 'bodyless no-cors post');
+  assert.equal(await raw('POST', '/api/boards', { 'Content-Type': 'text/plain' }, body), 403, 'simple text/plain post');
+  assert.equal(await raw('POST', '/api/boards', {}, body), 403, 'body without a type');
+  assert.equal(await raw('DELETE', `/api/boards/${board.id}`, { Origin: 'https://evil.example' }), 403);
+  assert.equal(repo.listBoards().length, before, 'nothing was created or deleted');
+
+  assert.equal(await raw('POST', '/api/boards', { ...json, Origin: base }, body), 200, 'the app’s own page');
+  assert.equal(await raw('POST', '/api/boards', { 'Content-Type': 'application/json; charset=utf-8' }, body), 200, 'curl, tests');
+});
+
+test('the daily dollar limit stops manual calls too, not just the autopilot', async () => {
+  const board = await newBoard();
+  const idea = await seed(board.id, 'Ett frö att förgrena');
+  await engine.idle();
+  repo.addSpend(board.id, 0.001); // spend of its own, so the test does not depend on earlier ones
+  const saved = settings;
+  settings = { ...settings, maxUsdPerDay: 0.0001 };
+  try {
+    const n = calls.length;
+    const r = await api('POST', `/api/ideas/${idea.id}/expand`);
+    assert.equal(r.status, 429);
+    assert.equal(r.data.code, 'global_budget');
+    assert.equal(calls.length, n, 'no model was called');
+  } finally {
+    settings = saved;
+  }
+  assert.equal((await api('POST', `/api/ideas/${idea.id}/expand`)).status, 200, 'under the limit it works again');
 });

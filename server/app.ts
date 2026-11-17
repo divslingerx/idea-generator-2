@@ -18,7 +18,45 @@ export type Runtime = {
   received(): boolean;
 };
 
-type Deps = { repo: Repo; engine: Engine; autopilot: Autopilot; runtime: Runtime; publicDir: string };
+type Deps = {
+  repo: Repo; engine: Engine; autopilot: Autopilot; runtime: Runtime; publicDir: string;
+  /** Extra hostnames the Host header may name, besides loopback (e.g. a LAN name when HOST=0.0.0.0). */
+  allowedHosts?: string[];
+};
+
+const LOOPBACK_HOSTS = ['localhost', '127.0.0.1', '[::1]'];
+
+/** URL.host or .hostname of a header value (lowercased by URL); null if it does not parse. */
+function urlPart(value: string, part: 'host' | 'hostname'): string | null {
+  try {
+    return new URL(value)[part];
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * There is no login, so only the app's own pages may drive it:
+ * - Host must be a known name. A DNS-rebinding page arrives with its own domain as Host.
+ * - A browser sends Origin on every cross-site non-GET (fetch, forms, no-cors); it must match Host.
+ *   No Origin means a non-browser client (curl, the tests), which is fine on loopback.
+ * - A body must be declared JSON. That makes a browser preflight it, and the preflight fails
+ *   because we never send CORS headers. Plain-text "simple" cross-site posts are refused.
+ */
+export function rejectRequest(req: IncomingMessage, allowed: Set<string>): string | null {
+  const host = req.headers.host;
+  const hostname = host ? urlPart(`http://${host}`, 'hostname') : null;
+  if (!hostname || !allowed.has(hostname)) {
+    return `Host "${host ?? ''}" is not allowed. Open the app at localhost, or add the name to ALLOWED_HOSTS (comma-separated) and restart.`;
+  }
+  if (req.method === 'GET' || req.method === 'HEAD') return null;
+  const origin = req.headers.origin;
+  // "null" (sandboxed iframes, file://) never matches, so it is refused too.
+  if (origin !== undefined && urlPart(origin, 'host') !== urlPart(`http://${host}`, 'host')) return 'Cross-origin request';
+  const hasBody = Number(req.headers['content-length'] ?? 0) > 0 || req.headers['transfer-encoding'] !== undefined;
+  if (hasBody && !/^application\/json\s*(;|$)/i.test(req.headers['content-type'] ?? '')) return 'Body must be application/json';
+  return null;
+}
 
 const TYPES: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
@@ -162,8 +200,14 @@ export function reportMarkdown(r: ReturnType<Repo['report']>, lang: 'sv' | 'en')
   return out.join('\n');
 }
 
-export function createHandler({ repo, engine, autopilot, runtime, publicDir }: Deps) {
+export function createHandler({ repo, engine, autopilot, runtime, publicDir, allowedHosts = [] }: Deps) {
   const root = resolve(publicDir);
+  // Entries may carry a scheme or a port, or be a bare IPv6 address; only the hostname is compared.
+  const hostnameOfEntry = (entry: string) => {
+    const h = entry.replace(/^[a-z][a-z0-9+.-]*:\/\//i, '');
+    return urlPart(`http://${h}`, 'hostname') ?? urlPart(`http://[${h}]`, 'hostname');
+  };
+  const hosts = new Set([...LOOPBACK_HOSTS, ...allowedHosts.map((h) => h.trim()).filter(Boolean).map(hostnameOfEntry).filter((h): h is string => !!h)]);
 
   function providerStatus() {
     const s = runtime.get();
@@ -323,6 +367,8 @@ export function createHandler({ repo, engine, autopilot, runtime, publicDir }: D
 
   return async function handler(req: IncomingMessage, res: ServerResponse) {
     const url = new URL(req.url ?? '/', 'http://localhost');
+    const refused = rejectRequest(req, hosts);
+    if (refused) return send(res, 403, { error: refused, code: 'forbidden' });
     try {
       if (!url.pathname.startsWith('/api/')) {
         if (req.method !== 'GET' && req.method !== 'HEAD') return send(res, 405, { error: 'Method not allowed' });
