@@ -203,7 +203,7 @@ export function makeLLM(chat: ChatFn) {
         .filter(Boolean)
         .join('\n\n');
       const { value, costUsd } = await gen(a.model, a.flow.system, user, 'expand', EXPAND_SCHEMA);
-      const ideas = (Array.isArray(value?.ideas) ? value.ideas : []).map(tidy).filter((i: Pitch) => i.title);
+      const ideas: Pitch[] = (Array.isArray(value?.ideas) ? value.ideas : []).map(tidy).filter((i: Pitch) => i.title);
       if (!ideas.length) throw new Error('The model returned no ideas');
       return { ideas: ideas.slice(0, 3), costUsd };
     },

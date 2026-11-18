@@ -86,7 +86,9 @@ async function api(method: string, path: string, body?: unknown) {
     body: body ? JSON.stringify(body) : undefined,
   });
   const type = res.headers.get('content-type') ?? '';
-  return { status: res.status, data: type.includes('json') ? await res.json() : await res.text() };
+  // Deliberately loose: the tests read many different response shapes, and the server has no shared response types yet.
+  const data: any = type.includes('json') ? await res.json() : await res.text();
+  return { status: res.status, data };
 }
 const newBoard = async (extra: object = {}) => (await api('POST', '/api/boards', { lang: 'sv', ...extra })).data.board;
 const seed = async (boardId: number, text: string) => (await api('POST', `/api/boards/${boardId}/seed`, { text })).data.idea;

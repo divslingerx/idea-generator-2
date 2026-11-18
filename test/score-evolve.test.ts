@@ -75,6 +75,7 @@ test('selection favours fitter parents', () => {
   const rng = rngFrom(42);
   for (let n = 0; n < 4000; n++) {
     const m = nextMove(ideas, [], { rng, mutationRate: 0 });
+    assert.ok(m?.type === 'combine', 'with mutationRate 0 every move is a cross');
     for (const p of [m.a, m.b]) count.set(p.id, (count.get(p.id) ?? 0) + 1);
   }
   const best = count.get(10) ?? 0;

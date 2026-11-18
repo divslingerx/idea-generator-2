@@ -6,6 +6,7 @@ Node 25 runs the TypeScript server directly; the frontend is vanilla ES modules.
 
 - `npm start` – server on http://localhost:8300 (`PORT`, `HOST`, `DB_FILE` override)
 - `npm test` – 50 tests (`node --test`), fake LLM and fake provider servers, no network
+- `npm run typecheck` – `tsc` in strict mode with `tsconfig.json`. It emits nothing: Node strips the types at run time. Keep it at zero errors.
 - `npm run calibrate [-- --model provider:model]` – real judge against weak and strong reference ideas. It costs money. **Re-run it whenever the judge's prompt, schema or model changes.**
 
 ## Layout
@@ -29,6 +30,7 @@ Node 25 runs the TypeScript server directly; the frontend is vanilla ES modules.
 ## Rules that matter
 
 - **The medal comes from code, not the model:** a sum of three 1–5 scores, bronze from 9, silver from 11, gold from 13 (`score.js`). Left uncalibrated, an LLM jury gave 3/3 to the bare word "fire"; the calibration test keeps that from happening here.
+- **Type-only imports say `import type`** (`verbatimModuleSyntax`). Node strips only those, so a type imported without `type` fails at run time, and the type check catches it. No enums, namespaces or parameter properties either (`erasableSyntaxOnly`). Imports name the `.ts` file: `tsc` accepts `./llm.js` too, but Node then fails with `ERR_MODULE_NOT_FOUND` (only the tests catch that).
 - **Never put integer `minimum`/`maximum` in a JSON schema.** Anthropic rejects them. Put the range in the description and clamp in code.
 - **Anthropic native: send no `temperature`.** API version 2026-10-21 rejects it. Use effort `low`. The SDK sends the key as a Bearer token.
 - **OpenRouter: send `reasoning:{enabled:false}`** and retry without it on a 400 that mentions reasoning (some models insist on reasoning).

@@ -1,0 +1,28 @@
+{
+  // Type checking only. Node 25 runs the .ts files directly (type stripping), so tsc emits nothing.
+  "compilerOptions": {
+    "target": "esnext",
+    // Node only: without this, tsc also loads the browser (DOM) types, so `document` would pass in server code.
+    "lib": ["esnext"],
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "noEmit": true,
+    // Imports name the .ts file, as Node needs them to.
+    "allowImportingTsExtensions": true,
+    // Only syntax Node can strip: no enums, namespaces or parameter properties.
+    "erasableSyntaxOnly": true,
+    // Type-only imports must say `import type`: Node strips nothing else, so a missing `type` fails at run time.
+    "verbatimModuleSyntax": true,
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noImplicitReturns": true,
+    "noFallthroughCasesInSwitch": true,
+    // The server imports the shared browser modules in public/js (score.js, evolve.js); read them, don't check them.
+    "allowJs": true,
+    "checkJs": false,
+    "skipLibCheck": true,
+    "types": ["node"]
+  },
+  "include": ["server/**/*.ts", "test/**/*.ts", "tools/**/*.ts"]
+}

@@ -40,9 +40,10 @@ Each board has a **goal** that every step works toward. Seed it with a thought, 
 Needs Node 25 or newer, which runs TypeScript directly. There is no build step.
 
 ```bash
-npm install          # one dependency: @anthropic-ai/sdk
+npm install          # one runtime dependency: @anthropic-ai/sdk
 npm start            # http://localhost:8300
 npm test             # 50 tests, fake LLM, no network
+npm run typecheck    # tsc, strict; checks types only (Node runs the .ts files directly)
 npm run calibrate    # real judge vs. reference ideas (~$0.07); -- --model ollama:qwen3:8b for others
 ```
 
